@@ -1,68 +1,48 @@
-<!DOCTYPE html>
-<html lang="{{ blog_language }}">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ category }} | {{ blog_name }}</title>
-  <meta name="description" content="{{ blog_name }} - {{ category }}の記事一覧 ({{ article_count }}件)">
-  <link rel="canonical" href="{{ blog_url }}/category/{{ category }}.html">
-  {{ adsense_head }}
-  <style>
-    :root {
-      --primary: {{ theme.primary | default('#d97757') }};
-      --accent: {{ theme.accent | default('#1a1a2e') }};
-      --light-bg: {{ theme.light_bg | default('#fdf8f6') }};
-      --light-surface: {{ theme.light_surface | default('#ffffff') }};
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; background: var(--light-bg); color: #333; line-height: 1.8; }
-    header { background: var(--accent); color: #fff; padding: 1rem 2rem; }
-    header a { color: #fff; text-decoration: none; }
-    header h1 { font-size: 1.2rem; }
-    .container { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-    .breadcrumb { font-size: 0.85rem; margin-bottom: 1rem; color: #666; }
-    .breadcrumb a { color: var(--primary); text-decoration: none; }
-    .page-title { font-size: 1.6rem; color: var(--accent); margin-bottom: 0.5rem; }
-    .count { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
-    .article-card { background: var(--light-surface); border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: transform 0.2s; }
-    .article-card:hover { transform: translateY(-2px); }
-    .article-card h2 { font-size: 1.2rem; margin-bottom: 0.3rem; }
-    .article-card h2 a { color: var(--accent); text-decoration: none; }
-    .article-card h2 a:hover { color: var(--primary); }
-    .article-card .meta { color: #888; font-size: 0.85rem; margin-bottom: 0.5rem; }
-    .article-card .description { color: #666; font-size: 0.95rem; }
-    .back-link { display: inline-block; margin-top: 1.5rem; color: var(--primary); text-decoration: none; font-size: 0.95rem; }
-    footer { text-align: center; padding: 2rem; color: #999; font-size: 0.85rem; margin-top: 2rem; border-top: 1px solid #eee; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1><a href="{{ blog_url }}/">{{ blog_name }}</a></h1>
-  </header>
+{# カテゴリページ: Bentoカードグリッドで記事一覧 #}
+{% extends "base.html" %}
 
-  <div class="container">
-    <div class="breadcrumb">
-      <a href="{{ blog_url }}/">ホーム</a> &gt; {{ category }}
+{% block title %}{{ category }} の記事一覧 | {{ blog_name }}{% endblock %}
+{% block meta_description %}{{ blog_name }} の「{{ category }}」カテゴリに属する記事一覧（{{ article_count }}件）{% endblock %}
+{% block canonical %}{{ blog_url }}/category/{{ category }}.html{% endblock %}
+{% block og_title %}{{ category }} の記事一覧{% endblock %}
+
+{% block content %}
+<div class="layout-main">
+    <div class="content-area">
+        <nav class="breadcrumb" aria-label="パンくずリスト">
+            <a href="{{ blog_url }}/index.html">ホーム</a>
+            <span class="breadcrumb-sep">/</span>
+            <span>{{ category }}</span>
+        </nav>
+
+        <header class="mb-3" style="padding-bottom:1.5rem;border-bottom:1px solid var(--border);">
+            <h1 style="display:flex;align-items:center;gap:0.75rem;">
+                <span class="category-badge" style="font-size:0.9rem;">{{ category }}</span>
+                <span>の記事一覧</span>
+            </h1>
+            <p class="text-muted mt-1">{{ article_count }} 件の記事</p>
+        </header>
+
+        {% if articles %}
+        <div class="card-grid" style="margin-top:1.5rem;">
+            {% for article in articles %}
+            <article class="card">
+                <div class="card-thumb"><span class="card-thumb-text">{{ category }}</span></div>
+                <div class="card-body">
+                    <h2 class="card-title"><a href="{{ blog_url }}/articles/{{ article.slug }}.html">{{ article.title }}</a></h2>
+                    <div class="card-meta">
+                        <span>{{ article.date }}</span>
+                        <span class="reading-time">3分で読める</span>
+                    </div>
+                    {% if article.description %}<p class="card-excerpt">{{ article.description }}</p>{% endif %}
+                    {% if article.tags %}<div class="card-tags">{% for tag in article.tags[:3] %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state"><p>このカテゴリにはまだ記事がありません。</p></div>
+        {% endif %}
     </div>
-
-    <h2 class="page-title">{{ category }}</h2>
-    <p class="count">{{ article_count }}件の記事</p>
-
-    {% for article in articles %}
-    <div class="article-card">
-      <h2><a href="{{ blog_url }}/articles/{{ article.slug }}.html">{{ article.title }}</a></h2>
-      <div class="meta">
-        <time>{{ article.date }}</time>
-      </div>
-      <p class="description">{{ article.description }}</p>
-    </div>
-    {% endfor %}
-
-    <a class="back-link" href="{{ blog_url }}/">&larr; ホームに戻る</a>
-  </div>
-
-  <footer>
-    &copy; {{ blog_name }}. All rights reserved.
-  </footer>
-</body>
-</html>
+</div>
+{% endblock %}
