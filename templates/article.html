@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="{{ blog_language }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ article.title }} | {{ blog_name }}</title>
+  <meta name="description" content="{{ article.description }}">
+  <link rel="canonical" href="{{ blog_url }}/articles/{{ article.slug }}.html">
+  {{ adsense_head }}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "headline": "{{ article.title }}",
+    "description": "{{ article.description }}",
+    "datePublished": "{{ article.date }}",
+    "url": "{{ blog_url }}/articles/{{ article.slug }}.html",
+    "publisher": {
+      "@type": "Organization",
+      "name": "{{ blog_name }}"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --primary: {{ theme.primary | default('#d97757') }};
+      --accent: {{ theme.accent | default('#1a1a2e') }};
+      --light-bg: {{ theme.light_bg | default('#fdf8f6') }};
+      --light-surface: {{ theme.light_surface | default('#ffffff') }};
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; background: var(--light-bg); color: #333; line-height: 1.8; }
+    header { background: var(--accent); color: #fff; padding: 1rem 2rem; }
+    header a { color: #fff; text-decoration: none; }
+    header h1 { font-size: 1.2rem; }
+    .container { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+    .breadcrumb { font-size: 0.85rem; margin-bottom: 1rem; color: #666; }
+    .breadcrumb a { color: var(--primary); text-decoration: none; }
+    article { background: var(--light-surface); padding: 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    article h1 { font-size: 1.8rem; margin-bottom: 0.5rem; color: var(--accent); }
+    .meta { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .meta .category { background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .tags { margin-top: 0.5rem; }
+    .tags span { background: #eee; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin-right: 4px; }
+    .toc { background: #f9f9f9; border: 1px solid #eee; border-radius: 6px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
+    .toc ul { padding-left: 1.2rem; }
+    .content h2 { font-size: 1.4rem; margin: 1.5rem 0 0.8rem; padding-bottom: 0.3rem; border-bottom: 2px solid var(--primary); color: var(--accent); }
+    .content h3 { font-size: 1.2rem; margin: 1.2rem 0 0.6rem; color: var(--accent); }
+    .content p { margin-bottom: 1rem; }
+    .content pre { background: #1a1a2e; color: #f8f8f2; padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 1rem; }
+    .content code { font-family: 'Fira Code', monospace; font-size: 0.9em; }
+    .content table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+    .content th, .content td { border: 1px solid #ddd; padding: 0.6rem; text-align: left; }
+    .content th { background: var(--primary); color: #fff; }
+    .content blockquote { border-left: 4px solid var(--primary); padding: 0.5rem 1rem; margin: 1rem 0; background: #fff8f5; }
+    .content a { color: var(--primary); }
+    .content img { max-width: 100%; height: auto; border-radius: 6px; }
+    {{ adsense_article_ad }}
+    .related { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #eee; }
+    .related h3 { font-size: 1.1rem; margin-bottom: 0.8rem; }
+    .related ul { list-style: none; padding: 0; }
+    .related li { margin-bottom: 0.5rem; }
+    .related a { color: var(--primary); text-decoration: none; }
+    footer { text-align: center; padding: 2rem; color: #999; font-size: 0.85rem; margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><a href="{{ blog_url }}/">{{ blog_name }}</a></h1>
+  </header>
+
+  <div class="container">
+    <div class="breadcrumb">
+      <a href="{{ blog_url }}/">ホーム</a> &gt;
+      <a href="{{ blog_url }}/category/{{ article.category }}.html">{{ article.category }}</a> &gt;
+      {{ article.title }}
+    </div>
+
+    <article>
+      <h1>{{ article.title }}</h1>
+      <div class="meta">
+        <time>{{ article.date }}</time>
+        <span class="category">{{ article.category }}</span>
+        {% if article.tags %}
+        <div class="tags">
+          {% for tag in article.tags %}<span>{{ tag }}</span>{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      {% if toc %}
+      <div class="toc">
+        {{ toc }}
+      </div>
+      {% endif %}
+
+      <div class="content">
+        {{ content }}
+      </div>
+
+      {% if related %}
+      <div class="related">
+        <h3>関連記事</h3>
+        <ul>
+          {% for r in related %}
+          <li><a href="{{ blog_url }}/articles/{{ r.slug }}.html">{{ r.title }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </article>
+  </div>
+
+  <footer>
+    &copy; {{ blog_name }}. All rights reserved.
+  </footer>
+</body>
+</html>
