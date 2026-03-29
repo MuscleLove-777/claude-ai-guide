@@ -1,0 +1,55 @@
+name: Claude AI Guide - Auto Generate
+
+on:
+  schedule:
+    # JST 7:00 = UTC 22:00 (前日)
+    - cron: '0 22 * * *'
+    # JST 12:00 = UTC 3:00
+    - cron: '0 3 * * *'
+    # JST 19:00 = UTC 10:00
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Collect topics
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python topic_collector.py
+        continue-on-error: true
+
+      - name: Generate article and build site
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python generate_and_build.py
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./output/site
+          publish_branch: gh-pages
+          force_orphan: true

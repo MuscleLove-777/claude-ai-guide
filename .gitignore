@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+.venv/
+env/
+
+# Output (generated content)
+output/articles/*.json
+output/site/
+output/topics/
+output/logs/
+
+# Keep directory structure
+!output/.gitkeep
+!output/articles/.gitkeep
+!output/topics/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment
+.env
+.env.local
+*.secret
+
+# Credentials
+credentials.json
+token.json
