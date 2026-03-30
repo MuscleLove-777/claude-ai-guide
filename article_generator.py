@@ -81,14 +81,14 @@ JSON形式で生成してください。
             json_match = re.search(r"```json\s*(.*?)\s*```", response_text, re.DOTALL)
             try:
                 if json_match:
-                    data = json.loads(json_match.group(1))
+                    data = json.loads(json_match.group(1), strict=False)
                 else:
                     cleaned = response_text.strip()
                     start = cleaned.find("{")
                     end = cleaned.rfind("}") + 1
                     if start >= 0 and end > start:
                         cleaned = cleaned[start:end]
-                    data = json.loads(cleaned)
+                    data = json.loads(cleaned, strict=False)
             except json.JSONDecodeError as e:
                 raise ValueError(f"JSONパース失敗: {e}") from e
 
