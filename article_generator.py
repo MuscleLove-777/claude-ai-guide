@@ -38,8 +38,10 @@ except ImportError:
             self.articles_dir = Path(config.BASE_DIR) / "output" / "articles"
             self.articles_dir.mkdir(parents=True, exist_ok=True)
 
+        MAX_RETRIES = 3
+
         def generate_article(self, keyword: str, category: str, prompts=None) -> dict:
-            """キーワードとカテゴリからSEO最適化されたブログ記事を生成する"""
+            """キーワードとカテゴリからSEO最適化されたブログ記事を生成する（リトライ付き）"""
             prompts = prompts or self.prompts
 
             if prompts and hasattr(prompts, "build_article_prompt"):
@@ -47,10 +49,23 @@ except ImportError:
             else:
                 prompt = self._build_default_prompt(keyword, category)
 
-            response = self.client.models.generate_content(
-                model=self.model_name, contents=prompt
-            )
-            article = self._parse_response(response.text)
+            last_error = None
+            for attempt in range(1, self.MAX_RETRIES + 1):
+                try:
+                    logger.info("記事生成 試行 %d/%d", attempt, self.MAX_RETRIES)
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=prompt,
+                        config={"response_mime_type": "application/json"},
+                    )
+                    article = self._parse_response(response.text)
+                    break
+                except (ValueError, Exception) as e:
+                    last_error = e
+                    logger.warning("試行 %d 失敗: %s", attempt, e)
+                    if attempt == self.MAX_RETRIES:
+                        raise ValueError(f"{self.MAX_RETRIES}回リトライしたが記事生成に失敗: {last_error}") from last_error
+
             article["keyword"] = keyword
             article["category"] = category
             article["generated_at"] = datetime.now().isoformat()
