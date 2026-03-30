@@ -8,6 +8,7 @@ blog_engine共通モジュールを使用し、フォールバックとしてロ
 """
 import json
 import logging
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,26 @@ logger = logging.getLogger(__name__)
 
 import config
 import prompts
+
+MAX_KEYWORD_RETRIES = 5
+
+
+def _fix_gemini_json(text: str) -> str:
+    """Gemini APIレスポンスのJSON不備を修復する。
+
+    - カンマ区切り欠落を補完（"value"\\n  "key" → "value",\\n  "key"）
+    - 不正なエスケープシーケンスを修正
+    - 末尾カンマを除去
+    """
+    # 不正なエスケープシーケンスを修正
+    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+    # "value" の後ろにカンマなしで次の "key" が来るパターンを修復
+    text = re.sub(r'(")\s*\n(\s*")', r'\1,\n\2', text)
+    # 配列内: "value" の後ろにカンマなしで次の "value" が来るパターンを修復
+    text = re.sub(r'(")\s*\n(\s*")', r'\1,\n\2', text)
+    # ] や } の前の末尾カンマを除去
+    text = re.sub(r',\s*([\]}])', r'\1', text)
+    return text
 
 
 def run(cfg=None, prm=None):
@@ -86,21 +107,42 @@ def run(cfg=None, prm=None):
                     'JSON形式のみ: {"category": "カテゴリ名", "keyword": "キーワード"}'
                 )
 
-            response = client.models.generate_content(model=cfg.GEMINI_MODEL, contents=prompt)
-            response_text = response.text.strip()
+            last_error = None
+            for attempt in range(1, MAX_KEYWORD_RETRIES + 1):
+                try:
+                    logger.info("キーワード選定 試行 %d/%d", attempt, MAX_KEYWORD_RETRIES)
+                    response = client.models.generate_content(
+                        model=cfg.GEMINI_MODEL,
+                        contents=prompt,
+                        config={
+                            "response_mime_type": "application/json",
+                            "max_output_tokens": 1024,
+                        },
+                    )
+                    response_text = response.text.strip()
 
-            if "```" in response_text:
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-                response_text = response_text.strip()
+                    if "```" in response_text:
+                        response_text = response_text.split("```")[1]
+                        if response_text.startswith("json"):
+                            response_text = response_text[4:]
+                        response_text = response_text.strip()
 
-            data = json.loads(response_text)
-            # Geminiがリストで返す場合があるので先頭要素を取得
-            if isinstance(data, list):
-                data = data[0]
-            category = data["category"]
-            keyword = data["keyword"]
+                    # JSON修復を適用してからパース
+                    response_text = _fix_gemini_json(response_text)
+                    data = json.loads(response_text, strict=False)
+                    # Geminiがリストで返す場合があるので先頭要素を取得
+                    if isinstance(data, list):
+                        data = data[0]
+                    category = data["category"]
+                    keyword = data["keyword"]
+                    break
+                except (json.JSONDecodeError, KeyError, Exception) as e:
+                    last_error = e
+                    logger.warning("キーワード選定 試行 %d 失敗: %s", attempt, e)
+                    if attempt == MAX_KEYWORD_RETRIES:
+                        raise ValueError(
+                            f"{MAX_KEYWORD_RETRIES}回リトライしたがキーワード選定に失敗: {last_error}"
+                        ) from last_error
 
         logger.info("選定結果 - カテゴリ: %s, キーワード: %s", category, keyword)
 
