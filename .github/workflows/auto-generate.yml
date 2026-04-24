@@ -2,50 +2,67 @@ name: Claude AI Guide - Auto Generate
 
 on:
   schedule:
-    # 毎日 JST 12:00 (UTC 3:00)
     - cron: '0 3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
     steps:
-      - name: Checkout repository
+      - name: リポジトリをチェックアウト
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: blog_engineをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: MuscleLove-777/blog-engine
+          path: blog_engine
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Python 3.12 をセットアップ
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: 依存パッケージをインストール
+        run: pip install -r pip install --upgrade pip
+ requirements.txt
 
-      - name: Collect topics
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python topic_collector.py
-        continue-on-error: true
-
-      - name: Generate article and build site
+      - name: 記事を自動生成してサイトをビルド
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python generate_and_build.py
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: 生成した記事をコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/
+          git diff --staged --quiet || git commit -m "記事自動生成: $(date '+%Y-%m-%d %H:%M')"
+          git push
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./output/site
-          publish_branch: gh-pages
-          force_orphan: true
+          path: ./output/site
+
+  deploy:
+    needs: generate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
