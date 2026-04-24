@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://musclelove-777.github.io/claude-ai-guide/sitemap.xml
