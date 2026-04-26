@@ -34,8 +34,9 @@ jobs:
           python-version: '3.12'
 
       - name: 依存パッケージをインストール
-        run: pip install -r pip install --upgrade pip
- requirements.txt
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: 記事を自動生成してサイトをビルド
         env:
