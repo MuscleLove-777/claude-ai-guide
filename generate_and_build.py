@@ -1,21 +1,13 @@
-#!/usr/bin/env python3
-"""Claude AI完全ガイド - GitHub Actions用一括実行スクリプト
+"""blog_engine - GitHub Actions用一括実行スクリプト
 
-キーワード選定 → トピック収集 → 記事生成 → アフィリエイト挿入 → サイトビルド
-を一括で実行する。
-
-blog_engine共通モジュールを使用し、フォールバックとしてローカル実装を持つ。
+各ブログのconfig.pyとprompts.pyを受け取って、
+キーワード選定 → 記事生成 → サイトビルドを一括実行する。
 """
 import json
 import logging
-import re
 import sys
+import time
 from datetime import datetime
-from pathlib import Path
-
-# パス設定
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,180 +15,138 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-import config
-import prompts
 
-MAX_KEYWORD_RETRIES = 5
-
-
-def _fix_gemini_json(text: str) -> str:
-    """Gemini APIレスポンスのJSON不備を修復する。
-
-    - カンマ区切り欠落を補完（"value"\\n  "key" → "value",\\n  "key"）
-    - 不正なエスケープシーケンスを修正
-    - 末尾カンマを除去
-    """
-    # 不正なエスケープシーケンスを修正
-    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
-    # "value" の後ろにカンマなしで次の "key" が来るパターンを修復
-    text = re.sub(r'(")\s*\n(\s*")', r'\1,\n\2', text)
-    # 配列内: "value" の後ろにカンマなしで次の "value" が来るパターンを修復
-    text = re.sub(r'(")\s*\n(\s*")', r'\1,\n\2', text)
-    # ] や } の前の末尾カンマを除去
-    text = re.sub(r',\s*([\]}])', r'\1', text)
-    return text
-
-
-def run(cfg=None, prm=None):
+def run(config, prompts=None):
     """メイン処理: キーワード選定 → 記事生成 → サイトビルド
 
     Args:
-        cfg: ブログ設定モジュール（省略時はローカルconfig使用）
-        prm: プロンプトモジュール（省略時はローカルprompts使用）
+        config: ブログ固有の設定モジュール
+        prompts: ブログ固有のプロンプトモジュール（任意）
     """
-    cfg = cfg or config
-    prm = prm or prompts
-
-    logger.info("=== %s 自動生成開始 ===", cfg.BLOG_NAME)
+    logger.info("=== %s 自動生成開始 ===", config.BLOG_NAME)
     start_time = datetime.now()
-
-    # ディレクトリ確保
-    for attr in ["OUTPUT_DIR", "ARTICLES_DIR", "SITE_DIR", "TOPICS_DIR"]:
-        d = getattr(cfg, attr, None)
-        if d:
-            Path(d).mkdir(parents=True, exist_ok=True)
-
-    # ステップ0: トピック収集（オプション）
-    logger.info("ステップ0: トピック収集")
-    try:
-        from topic_collector import TopicCollector
-        collector = TopicCollector(cfg, prm)
-        topics = collector.collect_all()
-        next_topic = collector.get_next_topic()
-        if next_topic:
-            logger.info("次のトピック: %s (スコア: %s)", next_topic.get("title", "?"), next_topic.get("score", "?"))
-    except Exception as e:
-        logger.warning("トピック収集スキップ: %s", e)
-        next_topic = None
 
     # ステップ1: キーワード選定
     logger.info("ステップ1: キーワード選定")
     try:
-        if next_topic and next_topic.get("keyword"):
-            # トピックコレクターからキーワードを取得
-            category = next_topic.get("category", cfg.TARGET_CATEGORIES[0])
-            keyword = next_topic["keyword"]
-            logger.info("トピックから選定: カテゴリ=%s, キーワード=%s", category, keyword)
+        from llm import get_llm_client
+
+        client = get_llm_client(config)
+
+        categories_text = "\n".join(f"- {cat}" for cat in config.TARGET_CATEGORIES)
+
+        # プロンプトモジュールにキーワード選定プロンプトがあればそれを使う
+        if prompts and hasattr(prompts, "build_keyword_prompt"):
+            prompt = prompts.build_keyword_prompt(config)
         else:
-            # Gemini APIでキーワード選定
-            from google import genai
+            prompt = (
+                f"{config.BLOG_NAME}用のキーワードを選定してください。\n\n"
+                "以下のカテゴリから1つ選び、そのカテゴリで今注目されている"
+                "トピック・キーワードを1つ提案してください。\n\n"
+                f"カテゴリ一覧:\n{categories_text}\n\n"
+                "検索ボリュームの高いキーワードを意識してください。\n\n"
+                "以下の形式でJSON形式のみで回答してください（説明不要）:\n"
+                '{"category": "カテゴリ名", "keyword": "キーワード"}'
+            )
 
-            if not cfg.GEMINI_API_KEY:
-                logger.error("GEMINI_API_KEY が設定されていません")
-                sys.exit(1)
+        # レートリミット対策: プライマリモデルとフォールバックモデルを順番に試す
+        fallback_model = getattr(config, "GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+        models_to_try = [config.GEMINI_MODEL]
+        if fallback_model and fallback_model != config.GEMINI_MODEL:
+            models_to_try.append(fallback_model)
 
-            client = genai.Client(api_key=cfg.GEMINI_API_KEY)
-
-            if prm and hasattr(prm, "build_keyword_prompt"):
-                prompt = prm.build_keyword_prompt(cfg)
-            else:
-                categories_text = "\n".join(f"- {cat}" for cat in cfg.TARGET_CATEGORIES)
-                prompt = (
-                    f"{cfg.BLOG_NAME}用のキーワードを選定してください。\n\n"
-                    f"カテゴリ一覧:\n{categories_text}\n\n"
-                    'JSON形式のみ: {"category": "カテゴリ名", "keyword": "キーワード"}'
-                )
-
-            last_error = None
-            for attempt in range(1, MAX_KEYWORD_RETRIES + 1):
+        max_retries = 3
+        response_text = None
+        for model_name in models_to_try:
+            for attempt in range(1, max_retries + 1):
                 try:
-                    logger.info("キーワード選定 試行 %d/%d", attempt, MAX_KEYWORD_RETRIES)
+                    logger.info("モデル %s でキーワード選定を試行（%d/%d）", model_name, attempt, max_retries)
                     response = client.models.generate_content(
-                        model=cfg.GEMINI_MODEL,
-                        contents=prompt,
-                        config={
-                            "response_mime_type": "application/json",
-                            "max_output_tokens": 1024,
-                        },
+                        model=model_name, contents=prompt
                     )
                     response_text = response.text.strip()
-
-                    if "```" in response_text:
-                        response_text = response_text.split("```")[1]
-                        if response_text.startswith("json"):
-                            response_text = response_text[4:]
-                        response_text = response_text.strip()
-
-                    # JSON修復を適用してからパース
-                    response_text = _fix_gemini_json(response_text)
-                    data = json.loads(response_text, strict=False)
-                    # Geminiがリストで返す場合があるので先頭要素を取得
-                    if isinstance(data, list):
-                        data = data[0]
-                    category = data["category"]
-                    keyword = data["keyword"]
                     break
-                except (json.JSONDecodeError, KeyError, Exception) as e:
-                    last_error = e
-                    logger.warning("キーワード選定 試行 %d 失敗: %s", attempt, e)
-                    if attempt == MAX_KEYWORD_RETRIES:
-                        raise ValueError(
-                            f"{MAX_KEYWORD_RETRIES}回リトライしたがキーワード選定に失敗: {last_error}"
-                        ) from last_error
+                except Exception as api_err:
+                    err_str = str(api_err)
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        if attempt < max_retries:
+                            wait = 30 * attempt
+                            logger.warning("レートリミット検出（%s）、%d秒待機（試行%d/%d）", model_name, wait, attempt, max_retries)
+                            time.sleep(wait)
+                            continue
+                        else:
+                            logger.warning("モデル %s でレートリミット超過、次のモデルを試行", model_name)
+                            break
+                    raise
+            if response_text is not None:
+                break
 
-        logger.info("選定結果 - カテゴリ: %s, キーワード: %s", category, keyword)
+        if response_text is None:
+            raise RuntimeError("キーワード選定のAPI呼び出しに失敗しました")
+
+        if "```" in response_text:
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+            response_text = response_text.strip()
+
+        data = json.loads(response_text)
+        # Geminiがリストで返す場合があるので先頭要素を取得
+        if isinstance(data, list):
+            data = data[0]
+        category = data["category"]
+        keyword = data["keyword"]
+        logger.info(f"選定結果 - カテゴリ: {category}, キーワード: {keyword}")
 
     except Exception as e:
-        logger.error("キーワード選定失敗: %s", e)
+        logger.error(f"キーワード選定に失敗: {e}")
         sys.exit(1)
 
     # ステップ2: 記事生成
     logger.info("ステップ2: 記事生成")
     try:
-        from article_generator import ArticleGenerator
-        from seo_optimizer import SEOOptimizer
+        from blog_engine.article_generator import ArticleGenerator
+        from blog_engine.seo_optimizer import SEOOptimizer
 
-        generator = ArticleGenerator(cfg)
-        article = generator.generate_article(keyword=keyword, category=category, prompts=prm)
-        logger.info("記事生成完了: %s", article.get("title", "不明"))
+        generator = ArticleGenerator(config)
+        article = generator.generate_article(
+            keyword=keyword, category=category, prompts=prompts
+        )
+        logger.info(f"記事生成完了: {article.get('title', '不明')}")
 
-        optimizer = SEOOptimizer(cfg)
+        optimizer = SEOOptimizer(config)
         seo_result = optimizer.check_seo_score(article)
-        logger.info("SEOスコア: %d/100 (グレード: %s)", seo_result.get("total_score", 0), seo_result.get("grade", "?"))
+        logger.info(f"SEOスコア: {seo_result.get('total_score', 0)}/100")
 
     except Exception as e:
-        logger.error("記事生成失敗: %s", e)
+        logger.error(f"記事生成に失敗: {e}")
         sys.exit(1)
 
     # ステップ2.5: アフィリエイトリンク挿入
     logger.info("ステップ2.5: アフィリエイトリンク挿入")
     try:
-        from affiliate import AffiliateManager
-        aff = AffiliateManager(cfg, prm)
-        article = aff.insert_affiliate_links(article)
-        logger.info("アフィリエイト: %d件挿入", article.get("affiliate_count", 0))
-    except Exception as e:
-        logger.warning("アフィリエイト挿入スキップ: %s", e)
+        from blog_engine.affiliate import AffiliateManager
+        affiliate_mgr = AffiliateManager(config)
+        article = affiliate_mgr.insert_affiliate_links(article)
+        logger.info(f"アフィリエイトリンク: {article.get('affiliate_count', 0)}件挿入")
+    except Exception as aff_err:
+        logger.warning(f"アフィリエイトリンク挿入をスキップ: {aff_err}")
 
     # ステップ3: サイトビルド
     logger.info("ステップ3: サイトビルド")
     try:
-        from site_generator import SiteGenerator
-        site_gen = SiteGenerator(cfg)
+        from blog_engine.site_generator import SiteGenerator
+        site_gen = SiteGenerator(config)
         site_gen.build_site()
         logger.info("サイトビルド完了")
     except Exception as e:
-        logger.error("サイトビルド失敗: %s", e)
+        logger.error(f"サイトビルドに失敗: {e}")
         sys.exit(1)
 
     # 完了
     duration = (datetime.now() - start_time).total_seconds()
-    logger.info("=== 自動生成完了（%.1f秒） ===", duration)
-    logger.info("  カテゴリ: %s", category)
-    logger.info("  キーワード: %s", keyword)
-    logger.info("  タイトル: %s", article.get("title", "不明"))
-    logger.info("  SEOスコア: %d/100", seo_result.get("total_score", 0))
-
-
-if __name__ == "__main__":
-    run()
+    logger.info(f"=== 自動生成完了（{duration:.1f}秒） ===")
+    logger.info(f"  カテゴリ: {category}")
+    logger.info(f"  キーワード: {keyword}")
+    logger.info(f"  タイトル: {article.get('title', '不明')}")
+    logger.info(f"  SEOスコア: {seo_result.get('total_score', 0)}/100")
