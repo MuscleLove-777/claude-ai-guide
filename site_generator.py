@@ -4,6 +4,7 @@ blog_engineの共通モジュールを使用し、フォールバックとして
 SEO最適化: JSON-LD (BlogPosting, FAQPage, BreadcrumbList), robots.txt, sitemap.xml
 """
 import sys
+import re
 from pathlib import Path
 
 _engine_path = str(Path(__file__).parent.parent)
@@ -16,7 +17,50 @@ try:
     class SiteGenerator(_BaseSiteGenerator):
         """blog_engine拡張版: robots.txt生成を追加"""
 
+        @staticmethod
+        def _validate_slug(slug):
+            """記事のファイル名は日本語を含む単一componentだけを許可する。"""
+            if (not isinstance(slug, str) or not slug or slug in {".", ".."}
+                    or slug[-1] in ". " or any(ord(c) < 32 for c in slug)
+                    or any(c in slug for c in '/\\:<>"|?*')
+                    or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])", slug.split(".")[0], re.I)):
+                raise ValueError("Invalid article slug")
+            # 配備先の255-byte componentとWindowsの255 UTF-16 unitsの両方に収める。
+            filename = slug + ".html"
+            try:
+                too_long = len(filename.encode("utf-8")) > 255 or len(filename.encode("utf-16-le")) > 510
+            except UnicodeError:
+                raise ValueError("Invalid article slug encoding") from None
+            if too_long:
+                raise ValueError("Article filename is too long")
+            return slug
+
+        def _article_output_path(self, slug):
+            slug = self._validate_slug(slug)
+            root = Path(self.output_dir).absolute()
+            directory = root / "articles"
+            target = directory / (slug + ".html")
+            for candidate in (root, directory, target):
+                if candidate.exists() or candidate.is_symlink():
+                    stat = candidate.lstat()
+                    if candidate.is_symlink() or getattr(stat, "st_file_attributes", 0) & 0x400:
+                        raise ValueError("Linked article output is not allowed")
+                    if candidate == target and (not candidate.is_file() or stat.st_nlink != 1):
+                        raise ValueError("Invalid article output")
+            if directory.resolve().parent != root.resolve() or target.resolve().parent != directory.resolve():
+                raise ValueError("Article output escapes its directory")
+            return target
+
         def build_site(self):
+            # 記事名の境界と衝突を、既存出力の変更前にすべて確認する。
+            articles = self._load_articles()
+            names = set()
+            for article in articles:
+                slug = article.get("slug", article.get("id", "untitled"))
+                self._article_output_path(slug)
+                if slug.casefold() in names:
+                    raise ValueError("Duplicate article slug")
+                names.add(slug.casefold())
             super().build_site()
             self._generate_robots_txt()
             print("  robots.txt 生成完了")
@@ -67,22 +111,66 @@ except ImportError:
             )
             self.theme = getattr(config, "THEME", {})
 
+        @staticmethod
+        def _validate_slug(slug):
+            """記事のファイル名は日本語を含む単一componentだけを許可する。"""
+            if (not isinstance(slug, str) or not slug or slug in {".", ".."}
+                    or slug[-1] in ". " or any(ord(c) < 32 for c in slug)
+                    or any(c in slug for c in '/\\:<>"|?*')
+                    or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])", slug.split(".")[0], re.I)):
+                raise ValueError("Invalid article slug")
+            # 配備先の255-byte componentとWindowsの255 UTF-16 unitsの両方に収める。
+            filename = slug + ".html"
+            try:
+                too_long = len(filename.encode("utf-8")) > 255 or len(filename.encode("utf-16-le")) > 510
+            except UnicodeError:
+                raise ValueError("Invalid article slug encoding") from None
+            if too_long:
+                raise ValueError("Article filename is too long")
+            return slug
+
+        def _article_output_path(self, slug):
+            slug = self._validate_slug(slug)
+            root = Path(self.output_dir).absolute()
+            directory = root / "articles"
+            target = directory / (slug + ".html")
+            for candidate in (root, directory, target):
+                if candidate.exists() or candidate.is_symlink():
+                    stat = candidate.lstat()
+                    if candidate.is_symlink() or getattr(stat, "st_file_attributes", 0) & 0x400:
+                        raise ValueError("Linked article output is not allowed")
+                    if candidate == target and (not candidate.is_file() or stat.st_nlink != 1):
+                        raise ValueError("Invalid article output")
+            if directory.resolve().parent != root.resolve() or target.resolve().parent != directory.resolve():
+                raise ValueError("Article output escapes its directory")
+            return target
+
         def build_site(self):
             print(f"[サイト生成] 開始 - 出力先: {self.output_dir}")
+            # 記事名の境界と衝突を、既存出力の変更前にすべて確認する。
+            articles = self._load_articles()
+            names = set()
+            for article in articles:
+                slug = article.get("slug", article.get("id", "untitled"))
+                self._article_output_path(slug)
+                if slug.casefold() in names:
+                    raise ValueError("Duplicate article slug")
+                names.add(slug.casefold())
             if self.output_dir.exists():
                 shutil.rmtree(self.output_dir)
             self.output_dir.mkdir(parents=True, exist_ok=True)
             (self.output_dir / "articles").mkdir(parents=True, exist_ok=True)
             (self.output_dir / "category").mkdir(parents=True, exist_ok=True)
 
-            articles = self._load_articles()
             articles.sort(key=lambda a: a.get("date", ""), reverse=True)
             print(f"[サイト生成] 記事数: {len(articles)}")
 
             for article in articles:
                 html = self._render_article(article)
                 slug = article.get("slug", article.get("id", "untitled"))
-                (self.output_dir / "articles" / f"{slug}.html").write_text(html, encoding="utf-8")
+                output_path = self._article_output_path(slug)
+                with output_path.open("x", encoding="utf-8") as output:
+                    output.write(html)
 
             total_pages = max(1, math.ceil(len(articles) / self.ARTICLES_PER_PAGE))
             for page_num in range(1, total_pages + 1):
